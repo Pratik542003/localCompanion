@@ -19,11 +19,14 @@ class NewsLookupProvider(OnlineLookupProvider):
         url = (
             f"{self._base_url}/w/api.php"
             "?action=query&list=categorymembers"
-            "&cmtitle=Category:Published&cmlimit=5&format=json"
+            "&cmtitle=Category:Published&cmlimit=5"
+            "&cmsort=timestamp&cmdir=desc&format=json"
         )
 
+        headers = {"User-Agent": "LocalCompanion/0.1 (offline-first assistant)"}
+
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(timeout=self._timeout, headers=headers) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
@@ -31,7 +34,8 @@ class NewsLookupProvider(OnlineLookupProvider):
                 members = data.get("query", {}).get("categorymembers", [])
                 headlines = [m.get("title", "") for m in members]
 
-                if topic:
+                _GENERIC = {"", "news", "headlines", "latest", "latest news", "recent news", "current news"}
+                if topic and topic.lower().strip() not in _GENERIC:
                     topic_lower = topic.lower()
                     headlines = [h for h in headlines if topic_lower in h.lower()]
 

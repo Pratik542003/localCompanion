@@ -70,6 +70,10 @@ async def lifespan(app: FastAPI):
     app.state.stt = stt
     app.state.tts = tts
 
+    from app.core.state_manager import state_manager
+    from app.domain.models import CompanionState
+    await state_manager.set_state(CompanionState.ARMED)
+
     logger.info("Local Companion is ready!")
     yield
     logger.info("Shutting down Local Companion.")

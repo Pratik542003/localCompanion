@@ -33,10 +33,14 @@ if not exist ".env" (
 :: Create data directory
 if not exist "data" mkdir data
 
+:: Clear Python cache to ensure fresh code
+for /d /r "app" %%d in (__pycache__) do if exist "%%d" rd /s /q "%%d" >nul 2>&1
+
 echo.
 echo [INFO] Starting Local Companion on http://localhost:8000
 echo [INFO] Press Ctrl+C to stop.
 echo.
 
 call .venv\Scripts\activate.bat
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+set PYTHONDONTWRITEBYTECODE=1
+python -B -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

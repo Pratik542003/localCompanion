@@ -16,6 +16,7 @@ from app.domain.interfaces import (
     TaskRepository,
     InteractionRepository,
 )
+from app.providers.reasoning.demo_provider import DemoReasoningProvider
 from app.domain.models import (
     ActionType,
     CommandResponse,
@@ -86,15 +87,19 @@ class CommandProcessor:
         try:
             result = await self._reasoning.reason(cleaned)
         except Exception as exc:
-            logger.exception("Reasoning failed")
-            await state_manager.set_state(CompanionState.ERROR)
-            return CommandResponse(
-                success=False,
-                action="error",
-                processing_mode=ProcessingMode.LOCAL.value,
-                response=f"Reasoning error: {exc}",
-                state=CompanionState.ERROR.value,
-            )
+            logger.warning("Primary reasoning failed (%s), using fallback", exc)
+            try:
+                result = await DemoReasoningProvider().reason(cleaned)
+            except Exception:
+                logger.exception("Fallback reasoning also failed")
+                await state_manager.set_state(CompanionState.ERROR)
+                return CommandResponse(
+                    success=False,
+                    action="error",
+                    processing_mode=ProcessingMode.LOCAL.value,
+                    response=f"Reasoning error: {exc}",
+                    state=CompanionState.ERROR.value,
+                )
 
         response = await self._execute_action(result)
 

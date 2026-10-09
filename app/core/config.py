@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     llama_cpp_url: str = "http://localhost:8080"
     llama_cpp_model: str = "default"
-    llama_cpp_timeout: int = 30
+    llama_cpp_timeout: int = 120
 
     whisper_cpp_url: str = "http://localhost:8081"
     whisper_cpp_timeout: int = 30

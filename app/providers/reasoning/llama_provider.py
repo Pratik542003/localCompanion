@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -65,6 +66,78 @@ def _build_context(memories: list[str], tasks: list[dict]) -> str:
     return "\n\nCONTEXT:\n" + "\n".join(parts)
 
 
+def _extract_json(text: str) -> dict | None:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Find first { and its matching } using brace counting
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start : i + 1])
+                except (json.JSONDecodeError, ValueError):
+                    return None
+    return None
+
+
+_FALLBACK_KEYWORDS: list[tuple[ActionType, list[str]]] = [
+    (ActionType.WEATHER_LOOKUP, ["weather", "temperature", "forecast"]),
+    (ActionType.NEWS_LOOKUP, ["news", "headlines"]),
+    (ActionType.LIST_TASKS, ["show tasks", "list tasks", "my tasks"]),
+    (ActionType.COMPLETE_TASK, ["mark", "complete", "done with"]),
+    (ActionType.ADD_TASK, ["add task", "add to", "create task"]),
+    (ActionType.SAVE_MEMORY, ["remember", "save", "birthday is", "password is", "meeting is"]),
+    (ActionType.SEARCH_MEMORY, ["when is", "what is", "recall", "find"]),
+]
+
+
+def _fallback_classify(text: str) -> ReasoningResult:
+    lower = text.lower()
+    for action, keywords in _FALLBACK_KEYWORDS:
+        for kw in keywords:
+            if kw in lower:
+                params = {}
+                if action == ActionType.WEATHER_LOOKUP:
+                    m = re.search(r"\bin\s+(.+?)(?:\?|$)", lower)
+                    params = {"location": m.group(1).strip().rstrip(".") if m else ""}
+                elif action == ActionType.SAVE_MEMORY:
+                    params = {"content": text.strip()}
+                elif action == ActionType.SEARCH_MEMORY:
+                    idx = lower.find(kw)
+                    params = {"query": text[idx + len(kw):].strip().strip("?.")}
+                elif action in (ActionType.ADD_TASK, ActionType.COMPLETE_TASK):
+                    idx = lower.find(kw)
+                    params = {"title": text[idx + len(kw):].strip().strip(".")}
+                elif action == ActionType.NEWS_LOOKUP:
+                    params = {"topic": ""}
+                return ReasoningResult(
+                    action=action, parameters=params,
+                    confidence=0.6, response="Processed locally.",
+                )
+    return ReasoningResult(
+        action=ActionType.UNSUPPORTED, parameters={},
+        confidence=1.0, response="I cannot answer this reliably using my current local capabilities.",
+    )
+
+
 class LlamaCppReasoningProvider(ReasoningProvider):
 
     def __init__(
@@ -95,28 +168,37 @@ class LlamaCppReasoningProvider(ReasoningProvider):
                 {"role": "user", "content": text},
             ],
             "temperature": 0.1,
+            "max_tokens": 150,
+            "stop": ["\n\n"],
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                f"{self._base_url}/v1/chat/completions",
-                json=payload,
-            )
-            resp.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._base_url}/v1/chat/completions",
+                    json=payload,
+                )
+                resp.raise_for_status()
 
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+        except Exception as exc:
+            logger.warning("LLM call failed (%s), using fallback classifier", exc)
+            return _fallback_classify(text)
 
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
+        parsed = _extract_json(content)
+        if parsed is None:
+            logger.warning("LLM returned unparseable content: %s", content[:200])
+            return _fallback_classify(text)
 
-        parsed = json.loads(content)
+        action_str = parsed.get("action", "unsupported")
+        try:
+            action = ActionType(action_str)
+        except ValueError:
+            action = ActionType.UNSUPPORTED
+
         return ReasoningResult(
-            action=ActionType(parsed["action"]),
+            action=action,
             parameters=parsed.get("parameters", {}),
             confidence=float(parsed.get("confidence", 0.5)),
             response=parsed.get("response", ""),
