@@ -202,24 +202,97 @@ header {
     color: var(--text-muted);
 }
 
-.audio-upload {
+.audio-controls {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    gap: 10px;
     padding: 12px;
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
     border: 1px dashed var(--border);
 }
 
-.audio-upload label {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    cursor: pointer;
+.audio-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
-.audio-upload input[type="file"] {
+.audio-label {
+    cursor: pointer;
+    flex: 1;
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+.audio-controls input[type="file"] {
     display: none;
+}
+
+.btn-record {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 2px solid var(--error);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 120px;
+}
+
+.btn-record:hover {
+    background: rgba(244, 67, 54, 0.15);
+}
+
+.btn-record.recording {
+    background: rgba(244, 67, 54, 0.25);
+    border-color: var(--error);
+    animation: pulse-record 1.5s infinite;
+}
+
+.record-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--error);
+    display: inline-block;
+}
+
+.btn-record.recording .record-dot {
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse-record {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.3); }
+    50% { box-shadow: 0 0 0 8px rgba(244, 67, 54, 0); }
+}
+
+.btn-continuous {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 2px solid var(--border);
+    min-width: 140px;
+}
+
+.btn-continuous:hover {
+    background: rgba(76, 175, 80, 0.1);
+}
+
+.btn-continuous.active {
+    border-color: var(--success);
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--success);
+    animation: pulse-record 1.5s infinite;
+}
+
+.btn-continuous:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.record-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
 }
 
 .response-area {
@@ -369,6 +442,73 @@ header {
     color: var(--text-muted);
     padding: 32px 16px;
     font-size: 0.9rem;
+}
+
+.conversation-history {
+    margin-top: 16px;
+    max-height: 500px;
+    overflow-y: auto;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.chat-message {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chat-bubble {
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    max-width: 85%;
+    word-wrap: break-word;
+}
+
+.chat-user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.chat-companion {
+    align-self: flex-start;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+}
+
+.chat-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    align-self: flex-start;
+}
+
+.btn-clear {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 2px 10px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    margin-left: 12px;
+}
+
+.btn-clear:hover {
+    color: var(--error);
+    border-color: var(--error);
 }
 
 .spinner {

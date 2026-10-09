@@ -8,12 +8,25 @@ from app.domain.models import Memory
 from app.repositories.database import get_db
 
 
+_STOP_WORDS = frozenset(
+    "a an the is are was were am be been being do does did "
+    "have has had having will would shall should can could may might must "
+    "i me my mine we us our ours you your yours he him his she her hers "
+    "it its they them their theirs this that these those "
+    "what when where who whom which how why "
+    "of in on at to for with by from about into through during before after "
+    "and or but not no nor so yet if then else "
+    "is there here all any each every both few many much some such "
+    "get got tell told know knew find".split()
+)
+
+
 def _sanitize_fts_query(query: str) -> str:
     sanitized = re.sub(r"[^\w\s]", " ", query)
-    tokens = sanitized.split()
+    tokens = [t for t in sanitized.split() if t.lower() not in _STOP_WORDS]
     if not tokens:
         return ""
-    return " OR ".join(tokens)
+    return " AND ".join(tokens)
 
 
 class SQLiteMemoryRepository(MemoryRepository):

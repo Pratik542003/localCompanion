@@ -17,7 +17,7 @@ from app.repositories.task_repo import SQLiteTaskRepository
 from app.repositories.interaction_repo import SQLiteInteractionRepository
 from app.repositories.network_event_repo import SQLiteNetworkEventRepository
 from app.providers.reasoning import get_reasoning_provider
-from app.providers.online_lookup import get_weather_provider
+from app.providers.online_lookup import get_weather_provider, get_news_provider
 from app.providers.speech_to_text import get_speech_to_text
 from app.providers.text_to_speech import get_text_to_speech
 from app.services.command_processor import CommandProcessor
@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
     logger.info("Reasoning provider: %s", reasoning.provider_name())
 
     weather = get_weather_provider()
+    news = get_news_provider()
     stt = get_speech_to_text()
     tts = get_text_to_speech()
 
@@ -59,6 +60,7 @@ async def lifespan(app: FastAPI):
         interaction_repo=interaction_repo,
         network_event_repo=network_event_repo,
         weather_provider=weather,
+        news_provider=news,
     )
 
     app.state.command_processor = processor

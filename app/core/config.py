@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     weather_provider_url: str = "https://wttr.in"
     weather_timeout: int = 10
 
+    news_provider_url: str = "https://en.wikinews.org"
+    news_timeout: int = 10
+
     database_path: str = "data/companion.db"
 
     host: str = "0.0.0.0"

@@ -42,6 +42,7 @@ class ActionType(str, enum.Enum):
     LIST_TASKS = "list_tasks"
     COMPLETE_TASK = "complete_task"
     WEATHER_LOOKUP = "weather_lookup"
+    NEWS_LOOKUP = "news_lookup"
     UNSUPPORTED = "unsupported"
 
 

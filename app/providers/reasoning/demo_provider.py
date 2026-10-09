@@ -23,6 +23,11 @@ class DemoReasoningProvider(ReasoningProvider):
         ]),
         (ActionType.SAVE_MEMORY, [
             "keep in mind", "note that", "remember", "save", "store",
+            "birthday is", "meeting is", "deadline is", "password is",
+            "email is", "phone number is", "address is", "anniversary is",
+        ]),
+        (ActionType.NEWS_LOOKUP, [
+            "news", "headlines", "latest news", "what's happening",
         ]),
         (ActionType.WEATHER_LOOKUP, [
             "weather", "temperature", "forecast",
@@ -142,6 +147,15 @@ class DemoReasoningProvider(ReasoningProvider):
                 parameters={"title": title or original.strip()},
                 confidence=0.90,
                 response="I've marked that task as completed.",
+            )
+
+        if action == ActionType.NEWS_LOOKUP:
+            topic = self._extract_after_keyword(lower, matched_keyword)
+            return ReasoningResult(
+                action=ActionType.NEWS_LOOKUP,
+                parameters={"topic": topic},
+                confidence=0.88,
+                response="Let me fetch the latest headlines.",
             )
 
         if action == ActionType.WEATHER_LOOKUP:
