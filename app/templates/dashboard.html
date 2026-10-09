@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Companion</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <h1>Local Companion</h1>
+                <div class="state-badge" id="state-badge">
+                    <span class="state-dot" id="state-dot"></span>
+                    <span id="state-text">ARMED</span>
+                </div>
+            </div>
+            <div class="header-controls">
+                <select class="mode-select" id="mode-select" onchange="changeMode()">
+                    <option value="demo">Demo Mode</option>
+                    <option value="local_ai">Local AI Mode</option>
+                </select>
+                <button class="btn btn-mute" id="mute-btn" onclick="toggleMute()">Mute</button>
+            </div>
+        </header>
+
+        <div class="main-grid">
+            <!-- Command Input -->
+            <div class="card command-section">
+                <div class="card-title">Command</div>
+                <div class="input-group">
+                    <input type="text" id="command-input"
+                           placeholder='Type a command (e.g., "Hey Companion, remember that the meeting is Friday at 3 PM")'
+                           autocomplete="off">
+                    <button class="btn btn-primary" id="send-btn" onclick="sendCommand()">
+                        Send
+                        <span class="spinner" id="send-spinner"></span>
+                    </button>
+                </div>
+                <div class="audio-upload">
+                    <label for="audio-file" id="audio-filename">Choose audio file...</label>
+                    <input type="file" id="audio-file" accept=".wav,.mp3,.ogg,.flac,.webm" onchange="handleAudioSelect()">
+                    <button class="btn btn-secondary" onclick="uploadAudio()">
+                        Upload Audio
+                        <span class="spinner" id="audio-spinner"></span>
+                    </button>
+                </div>
+                <div class="response-area" id="response-area">
+                    <div class="response-header">
+                        <span class="processing-badge badge-local" id="response-badge">LOCAL</span>
+                    </div>
+                    <div id="response-text"></div>
+                </div>
+            </div>
+
+            <!-- Memories -->
+            <div class="card">
+                <div class="card-title">Memories</div>
+                <div class="memory-list" id="memory-list">
+                    <div class="empty-state">No memories saved yet.</div>
+                </div>
+            </div>
+
+            <!-- Tasks -->
+            <div class="card">
+                <div class="card-title">Tasks</div>
+                <div class="task-list" id="task-list">
+                    <div class="empty-state">No tasks yet.</div>
+                </div>
+            </div>
+
+            <!-- Network Events -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-title">Network Events</div>
+                <div class="event-list" id="event-list">
+                    <div class="empty-state">No network events recorded.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
