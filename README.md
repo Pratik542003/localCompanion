@@ -45,12 +45,12 @@ A private, offline-first personal AI companion that runs entirely on your device
 User Input -> Wake Word Check -> Reasoning (local) -> SQLite -> Response [LOCAL]
 ```
 
-**Online lookups** (weather):
+**Online lookups** (weather, news):
 ```
-User Input -> Wake Word Check -> Reasoning (local) -> wttr.in API -> Response [ONLINE_LOOKUP]
+User Input -> Wake Word Check -> Reasoning (local) -> wttr.in / Wikinews API -> Response [ONLINE_LOOKUP]
 ```
 
-Only the location parameter is sent online. No memories, tasks, conversation history, or personal information leaves the device.
+Only the location/topic parameter is sent online. No memories, tasks, conversation history, or personal information leaves the device.
 
 ### Hardware Abstraction Layer
 
@@ -65,7 +65,7 @@ All components are behind abstract interfaces so hardware can be swapped in late
 | `TextToSpeech` | `ConsoleTextToSpeech` / `PiperTextToSpeech` | `SpeakerOutput` (GPIO audio) |
 | `MuteController` | `SoftwareMuteController` | `GpioMuteController` (physical switch) |
 | `StatusIndicator` | `WebStatusIndicator` (state manager) | `GpioLedIndicator` (RGB LED) |
-| `OnlineLookupProvider` | `WeatherLookupProvider` | Same |
+| `OnlineLookupProvider` | `WeatherLookupProvider` / `NewsLookupProvider` | Same |
 
 ## Privacy
 
@@ -149,6 +149,7 @@ Demo mode works without any external AI models. It uses deterministic keyword ma
 | List Tasks | "show tasks", "list tasks", "pending tasks" |
 | Complete Task | "mark", "complete", "finish", "done with" |
 | Weather | "weather", "temperature", "forecast" |
+| News | "news", "headlines", "latest news" |
 
 ### Example Commands
 
@@ -159,6 +160,7 @@ Hey Companion, add testing the credential flow to my task list
 Hey Companion, show my pending tasks
 Hey Companion, mark testing the credential flow as completed
 Hey Companion, what is the weather in Bangalore?
+Hey Companion, what's the latest news?
 Hey Companion, write me a poem (unsupported — returns honest fallback)
 ```
 
@@ -292,7 +294,8 @@ local-companion/
 │   │   │   ├── console_tts.py     # Console output (default)
 │   │   │   └── piper_tts.py       # Piper TTS integration
 │   │   ├── online_lookup/
-│   │   │   └── weather_provider.py # wttr.in weather lookup
+│   │   │   ├── weather_provider.py # wttr.in weather lookup
+│   │   │   └── news_provider.py    # Wikinews news lookup
 │   │   └── hardware/
 │   │       └── placeholders.py    # Future GPIO/hardware stubs
 │   ├── static/
@@ -302,6 +305,12 @@ local-companion/
 │   │   └── dashboard.html
 │   └── main.py                    # FastAPI app + lifespan
 ├── data/                          # SQLite database (auto-created)
+├── docs/
+│   ├── LLAMA_CPP_SETUP.md         # llama.cpp setup guide
+│   ├── WHISPER_CPP_SETUP.md       # whisper.cpp setup guide
+│   ├── PROJECT_SETUP.md           # Complete project setup
+│   ├── DEMO_SCRIPT.md             # Live demo script
+│   └── PRESENTATION.md            # Presentation slide content
 ├── pyproject.toml
 ├── .env.example
 ├── .gitignore
@@ -311,10 +320,10 @@ local-companion/
 ## Current Limitations
 
 - Demo mode uses keyword matching, not semantic understanding
-- Audio input requires a running whisper.cpp server
-- Text-to-speech requires Piper binary installed separately
-- No continuous listening (push-to-talk via text/audio upload)
+- Audio file upload requires a running whisper.cpp server (live mic works without it via browser SpeechRecognition)
+- Continuous listening requires Chrome or Edge browser (SpeechRecognition API)
 - Single-user design (no authentication)
+- Hardware form factor is software-only (Raspberry Pi migration ready via abstraction layer)
 
 ## Future Raspberry Pi Integration Plan
 
@@ -324,8 +333,7 @@ The architecture is designed for a smooth transition to Raspberry Pi hardware:
 2. **LED indicator** — Replace `WebStatusIndicator` with `GpioLedIndicator` driving an RGB LED strip using the state color mapping
 3. **Microphone input** — Replace `AudioFileInputAdapter` with `MicrophoneAudioInput` capturing from a USB or I2S microphone
 4. **Speaker output** — Replace `ConsoleTextToSpeech` with `SpeakerOutput` playing audio through a connected speaker
-5. **Continuous listening** — Add a background audio capture loop with wake word detection
-6. **Power management** — Add battery monitoring and low-power modes
+5. **Power management** — Add battery monitoring and low-power modes
 
 No core application code needs rewriting — only the hardware provider implementations need to be created within the existing interface contracts.
 
@@ -342,3 +350,4 @@ No core application code needs rewriting — only the hardware provider implemen
 | Local TTS | Piper (optional) |
 | Frontend | HTML, CSS, JavaScript |
 | Weather API | wttr.in (free, no key required) |
+| News API | Wikinews (free, no key required) |
