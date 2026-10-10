@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     companion_mode: str = "demo"
-    wake_word_enabled: bool = True
+    wake_word_enabled: bool = False
     wake_phrase: str = "Hey Companion"
 
     llama_cpp_url: str = "http://localhost:8080"
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    allowed_audio_extensions: list[str] = [".wav", ".mp3", ".ogg", ".flac", ".webm"]
+    allowed_audio_extensions: list[str] = [".wav"]
     max_audio_size_mb: int = 25
 
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}

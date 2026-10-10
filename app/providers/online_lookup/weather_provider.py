@@ -5,13 +5,14 @@ from typing import Any
 import httpx
 
 from app.domain.interfaces import OnlineLookupProvider
+from app.core.privacy import require_lookup_url
 
 
 class WeatherLookupProvider(OnlineLookupProvider):
     """Weather lookup via wttr.in — only sends location, never personal data."""
 
     def __init__(self, base_url: str, timeout: int) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = require_lookup_url(base_url, "wttr.in")
         self._timeout = timeout
 
     async def lookup(self, params: dict[str, Any]) -> dict[str, Any]:

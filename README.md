@@ -2,6 +2,51 @@
 
 A private, offline-first personal AI companion that runs entirely on your device. All reasoning happens locally — the only permitted online calls are for real-time factual lookups (weather), never for reasoning or decision-making.
 
+## Start on this Windows computer
+
+Double-click `scripts/start-qwen.bat`, or from the scripts folder run:
+
+```powershell
+.\start-qwen.bat
+```
+
+The launcher starts/reuses Qwen on port 8082, Whisper on 8081, and the dashboard on 8000. Piper runs locally when speech is requested. Open http://localhost:8000 and refresh the page after an update.
+
+- **Record:** allow microphone access, speak, then click **Stop**.
+- **Continuous: On:** speak and pause; each utterance is transcribed locally. Speech arriving during processing is queued in order (up to four waiting utterances). Listening pauses during speaker playback to avoid hearing its own reply and resumes afterward. No wake phrase is required.
+- **TTS: On:** hear responses using the installed local Piper voice.
+- **Mute:** immediately stops this page's microphone and speaker playback; the server rejects new commands and speech requests until unmuted. Unmuting does not silently restart recording.
+- **Upload:** select a PCM WAV file, then click Upload. Other audio formats need conversion to WAV first.
+
+Chat and voice work without internet after installation. Weather/news requests are separate online lookups with an ONLINE LOOKUP badge. Qwen and Whisper URLs are restricted to loopback addresses; browser network requests are restricted to this app's origin.
+
+## Quick test conversation
+
+1. `my name is Rishav` ? name is saved.
+2. `what is my name?` ? `Your name is Rishav.`
+3. `my meeting is Friday at 3 PM`
+4. `my meeting is in Monday at 3 PM`
+5. `when is my meeting?` ? `Your meeting is on Monday at 3 PM.`
+6. `what is 4 + 6` ? `10`
+7. `my favorite color is blue`
+8. `what is my favorite color?` ? `Your favorite color is blue.`
+9. `Explain photosynthesis in two sentences`
+10. `Make that simpler` ? follows the previous explanation.
+11. `add task buy groceries`, then `show tasks`, then `complete buy groceries`.
+
+Repeat these using Record or Continuous mode. Test Mute while recording: your browser's microphone indicator should turn off. Turn TTS on to hear the replies. Actual microphone permissions and input volume must be checked on your computer.
+
+## Verification
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe scripts/verify-local.py
+# Optional, if Node.js is installed:
+node tests/test_voice_ui.cjs
+```
+
+The live verification uses a temporary database and rejects external HTTP destinations. It checks real Qwen follow-ups, Piper WAV output, Whisper transcription, saved preferences, and mute. It does not alter your saved memories.
+
 ## Architecture
 
 ```
@@ -125,7 +170,7 @@ cp .env.example .env
 
 Edit `.env` to configure:
 - `COMPANION_MODE` — `demo` (default) or `local_ai`
-- `WAKE_WORD_ENABLED` — `true` (default) or `false`
+- `WAKE_WORD_ENABLED` — `false` (default); set `true` to require the wake phrase
 - `LLAMA_CPP_URL` — URL of your llama.cpp server (for local_ai mode)
 - `WEATHER_PROVIDER_URL` — Weather API URL (default: `https://wttr.in`)
 
@@ -140,6 +185,17 @@ Then open http://localhost:8000 in your browser.
 ## Demo Mode
 
 Demo mode works without any external AI models. It uses deterministic keyword matching to classify commands:
+
+Demo mode also handles greetings and simple arithmetic, such as `what is 4 + 6`.
+It is not a general conversational model. For explanations, writing, and follow-up
+questions, select **Local AI Mode (conversation)** and run a local model server.
+The mode selector changes the active provider immediately.
+
+Local AI mode keeps the last six exchanges in memory for follow-up questions.
+**Clear History** clears this conversation context; restarting the app also clears it.
+Saved memories stay in SQLite. Recall answers directly using the latest matching
+saved entry, for example: "Your meeting is on Monday at 3 PM."
+It does not delete older memories or infer a calendar date from a weekday alone.
 
 | Command Type | Example Keywords |
 |-------------|-----------------|
@@ -189,7 +245,10 @@ Hey Companion, write me a poem (unsupported — returns honest fallback)
    python -m uvicorn app.main:app --reload
    ```
 
-The companion will send commands to llama.cpp for classification. If llama.cpp is unavailable, switch to Demo mode in the UI.
+The companion sends messages and recent conversation to llama.cpp for local answers
+and command routing. If the model is unavailable or returns an invalid result,
+basic commands fall back to deterministic handling and general chat reports the
+model issue.
 
 ## whisper.cpp Integration (Optional Speech-to-Text)
 
@@ -242,6 +301,7 @@ The companion will send commands to llama.cpp for classification. If llama.cpp i
 | PATCH | `/api/tasks/{id}` | Update task status |
 | GET | `/api/network-events` | List network events |
 | POST | `/api/mode` | Switch demo/local_ai mode |
+| POST | `/api/conversation/clear` | Clear recent conversation context |
 
 ### Command Request/Response
 
@@ -320,10 +380,10 @@ local-companion/
 ## Current Limitations
 
 - Demo mode uses keyword matching, not semantic understanding
-- Audio file upload requires a running whisper.cpp server (live mic works without it via browser SpeechRecognition)
-- Continuous listening requires Chrome or Edge browser (SpeechRecognition API)
+- Microphone, continuous listening, and WAV uploads require the local whisper.cpp server; the launcher starts it.
+- Continuous listening works while the dashboard is open and the browser has microphone permission. It stops on Mute, Continuous: Off, or leaving the page.
 - Single-user design (no authentication)
-- Hardware form factor is software-only (Raspberry Pi migration ready via abstraction layer)
+- Hardware providers are placeholders. Physical switch, light, standalone audio, and target-device validation still require implementation.
 
 ## Future Raspberry Pi Integration Plan
 

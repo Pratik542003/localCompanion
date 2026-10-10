@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import tempfile
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.state_manager import state_manager
@@ -25,6 +27,10 @@ from app.domain.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
 
 
 def _get_processor(request: Request):
@@ -52,6 +58,7 @@ async def health():
     return {
         "status": "healthy",
         "mode": settings.companion_mode,
+        "model": settings.llama_cpp_model if not settings.is_demo_mode else None,
         "state": state_manager.get_state().value,
     }
 
@@ -85,6 +92,29 @@ async def process_command(request: Request, cmd: CommandRequest) -> CommandRespo
     return await processor.process_text(cmd.text)
 
 
+@router.get("/api/voice")
+async def voice_status(request: Request):
+    stt = _get_stt(request)
+    tts = request.app.state.tts
+    return {"speech_to_text": bool(stt and await asyncio.to_thread(stt.is_available)),
+            "text_to_speech": tts.is_available(), "local_only": True}
+
+
+@router.post("/api/tts")
+async def speak(request: Request, body: SpeechRequest):
+    if mute_controller.is_muted():
+        raise HTTPException(409, "The companion is muted.")
+    tts = request.app.state.tts
+    if not tts.is_available():
+        raise HTTPException(503, "Local voice output is not configured.")
+    audio = await tts.speak(body.text)
+    if mute_controller.is_muted():
+        raise HTTPException(409, "The companion is muted.")
+    if not audio:
+        raise HTTPException(503, "Local voice output could not generate audio.")
+    return Response(audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
 @router.post("/api/audio")
 async def process_audio(request: Request, file: UploadFile = File(...)):
     stt = _get_stt(request)
@@ -107,11 +137,15 @@ async def process_audio(request: Request, file: UploadFile = File(...)):
             detail=f"Unsupported audio format: {ext}. Allowed: {settings.allowed_audio_extensions}",
         )
 
-    if stt is None or not stt.is_available():
+    # Send directly to inference: a busy Whisper server may not answer a separate
+    # health probe promptly, and probing every utterance adds an avoidable round trip.
+    if stt is None:
         raise HTTPException(
             status_code=503,
             detail="Speech-to-text is not available. Configure whisper.cpp to enable audio input.",
         )
+    if mute_controller.is_muted():
+        return JSONResponse({"success": False, "error": "The companion is muted.", "state": "MUTED"})
 
     tmp_path = None
     try:
@@ -130,6 +164,8 @@ async def process_audio(request: Request, file: UploadFile = File(...)):
 
         await state_manager.set_state(CompanionState.TRANSCRIBING)
         transcription = await stt.transcribe(tmp_path)
+        if mute_controller.is_muted():
+            return JSONResponse({"success": False, "error": "The companion is muted.", "state": "MUTED"})
 
         if not transcription.strip():
             await state_manager.set_state(CompanionState.ARMED)
@@ -279,9 +315,17 @@ async def list_network_events(request: Request):
 
 
 @router.post("/api/mode")
-async def set_mode(body: dict):
+async def set_mode(request: Request, body: dict):
     mode = body.get("mode", "").lower()
     if mode not in ("demo", "local_ai"):
         raise HTTPException(status_code=400, detail="Mode must be 'demo' or 'local_ai'.")
     settings.companion_mode = mode
+    from app.providers.reasoning import get_reasoning_provider
+    _get_processor(request).set_reasoning_provider(get_reasoning_provider())
     return {"mode": mode}
+
+
+@router.post("/api/conversation/clear")
+async def clear_conversation(request: Request):
+    _get_processor(request).clear_conversation()
+    return {"success": True}

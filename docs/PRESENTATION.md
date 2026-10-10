@@ -142,7 +142,7 @@ class OnlineLookupProvider(ABC):     # → Weather / News / (add more)
 
 | Feature | Details |
 |---------|---------|
-| Continuous Listening | Browser SpeechRecognition, auto-detects pause |
+| Continuous Listening | Local PCM capture and pause detection, on-device Whisper |
 | Wake Word | Configurable phrase ("Hey Companion") |
 | Mute Switch | Hard stop — nothing processed when muted |
 | State Indicator | 8 color-coded states (listening, reasoning, online, etc.) |

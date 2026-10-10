@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from app.domain.interfaces import (
     InteractionRepository,
 )
 from app.providers.reasoning.demo_provider import DemoReasoningProvider
+from app.providers.reasoning.local_answers import local_answer
 from app.domain.models import (
     ActionType,
     CommandResponse,
@@ -50,8 +53,20 @@ class CommandProcessor:
         self._weather = weather_provider
         self._news = news_provider
         self._wake = get_wake_word_processor()
+        self._conversation: list[dict[str, str]] = []
+        self._command_lock = asyncio.Lock()
+
+    def set_reasoning_provider(self, provider: ReasoningProvider) -> None:
+        self._reasoning = provider
+
+    def clear_conversation(self) -> None:
+        self._conversation.clear()
 
     async def process_text(self, text: str) -> CommandResponse:
+        async with self._command_lock:
+            return await self._process_text(text)
+
+    async def _process_text(self, text: str) -> CommandResponse:
         if mute_controller.is_muted():
             return CommandResponse(
                 success=False,
@@ -85,7 +100,9 @@ class CommandProcessor:
         await self._inject_context()
 
         try:
-            result = await self._reasoning.reason(cleaned)
+            result = local_answer(cleaned)
+            if result is None:
+                result = await self._reasoning.reason(cleaned)
         except Exception as exc:
             logger.warning("Primary reasoning failed (%s), using fallback", exc)
             try:
@@ -101,18 +118,37 @@ class CommandProcessor:
                     state=CompanionState.ERROR.value,
                 )
 
-        response = await self._execute_action(result)
+        if mute_controller.is_muted():
+            return CommandResponse(success=False, action="muted", processing_mode="LOCAL",
+                                   response="The companion is currently muted.", state="MUTED")
+        try:
+            response = await self._execute_action(result)
+        except Exception:
+            logger.exception("Command action failed")
+            response = CommandResponse(success=False, action=result.action.value,
+                processing_mode="LOCAL", response="I couldn't complete that action. Please try again.", state="ERROR")
+        self._conversation.extend([
+            {"role": "user", "content": cleaned},
+            {"role": "assistant", "content": response.response},
+        ])
+        self._conversation = self._conversation[-12:]
 
-        await state_manager.set_state(CompanionState.SPEAKING)
-        await self._interaction_repo.record(
-            result.action.value, response.processing_mode, response.response[:200]
-        )
-        await state_manager.set_state(CompanionState.ARMED)
+        if not mute_controller.is_muted():
+            await state_manager.set_state(CompanionState.SPEAKING)
+        try:
+            await self._interaction_repo.record(
+                result.action.value, response.processing_mode, response.response[:200]
+            )
+        except Exception:
+            logger.exception("Interaction log could not be written")
+        if not mute_controller.is_muted():
+            await state_manager.set_state(CompanionState.ARMED)
 
         return response
 
     async def _execute_action(self, result: ReasoningResult) -> CommandResponse:
         handlers: dict[ActionType, Any] = {
+            ActionType.ANSWER: self._handle_answer,
             ActionType.SAVE_MEMORY: self._handle_save_memory,
             ActionType.SEARCH_MEMORY: self._handle_search_memory,
             ActionType.ADD_TASK: self._handle_add_task,
@@ -144,11 +180,15 @@ class CommandProcessor:
             source="text",
         )
         saved = await self._memory_repo.save(memory)
+        user_name = result.parameters.get("user_name")
+        response_text = f"I've saved that to memory: \"{content}\""
+        if user_name:
+            response_text = f"Nice to meet you, {self._display_name(user_name)}. I'll remember your name."
         return CommandResponse(
             success=True,
             action=result.action.value,
             processing_mode=ProcessingMode.LOCAL.value,
-            response=f"I've saved that to memory: \"{content}\"",
+            response=response_text,
             state=CompanionState.SPEAKING.value,
             confidence=result.confidence,
         )
@@ -166,25 +206,56 @@ class CommandProcessor:
             )
 
         memories = await self._memory_repo.search(query)
+        is_user_name = result.parameters.get("memory_kind") == "user_name"
+        if is_user_name:
+            memories = [m for m in memories if re.match(r"^my name is\s+\S", m.content, re.I)]
         if not memories:
             return CommandResponse(
                 success=True,
                 action=result.action.value,
                 processing_mode=ProcessingMode.LOCAL.value,
-                response=f"I couldn't find anything in my memory about \"{query}\".",
+                response=("I don't know your name yet. You can tell me by saying 'my name is ...'."
+                          if is_user_name else f"I couldn't find anything in my memory about \"{query}\"."),
                 state=CompanionState.SPEAKING.value,
                 confidence=result.confidence,
             )
 
-        items = "; ".join(m.content for m in memories[:5])
+        memories.sort(key=lambda m: (
+            (m.updated_at or m.created_at).isoformat() if (m.updated_at or m.created_at) else "",
+            m.id or 0,
+        ), reverse=True)
+        response_text = self._format_recalled_fact(memories[0].content)
+        if is_user_name:
+            name = re.sub(r"^my name is\s+", "", memories[0].content, flags=re.I).strip().rstrip(".")
+            response_text = f"Your name is {self._display_name(name)}."
         return CommandResponse(
             success=True,
             action=result.action.value,
             processing_mode=ProcessingMode.LOCAL.value,
-            response=f"Here's what I found: {items}",
+            response=response_text,
             state=CompanionState.SPEAKING.value,
             confidence=result.confidence,
         )
+
+    @staticmethod
+    def _display_name(name: str) -> str:
+        return name.title() if name.islower() else name
+
+    @staticmethod
+    def _format_recalled_fact(content: str) -> str:
+        """Turn a saved fact into a direct reply without changing the stored memory."""
+        text = re.sub(r"^my\b", "Your", content.strip(), flags=re.I)
+        text = re.sub(
+            r"\bis\s+(?:(?:in|on)\s+)?"
+            r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b",
+            lambda match: "is on " + match.group(1).capitalize(),
+            text, flags=re.I,
+        )
+        if re.match(r"^I\b", text, flags=re.I):
+            text = f'You told me: "{text}"'
+        elif text:
+            text = text[0].upper() + text[1:]
+        return text if text.endswith((".", "?", "!")) else text + "."
 
     async def _handle_add_task(self, result: ReasoningResult) -> CommandResponse:
         title = result.parameters.get("title", "")
@@ -414,17 +485,27 @@ class CommandProcessor:
             confidence=result.confidence,
         )
 
+    async def _handle_answer(self, result: ReasoningResult) -> CommandResponse:
+        return CommandResponse(
+            success=True, action=result.action.value,
+            processing_mode=ProcessingMode.LOCAL.value,
+            response=result.response, state=CompanionState.SPEAKING.value,
+            confidence=result.confidence,
+        )
+
     async def _handle_unsupported(self, result: ReasoningResult) -> CommandResponse:
         return CommandResponse(
             success=True,
             action=ActionType.UNSUPPORTED.value,
             processing_mode=ProcessingMode.LOCAL.value,
-            response="I cannot answer this reliably using my current local capabilities.",
+            response=result.response or "I couldn't answer that. Please try rephrasing your question.",
             state=CompanionState.ARMED.value,
             confidence=result.confidence,
         )
 
     async def _inject_context(self) -> None:
+        if hasattr(self._reasoning, "set_conversation"):
+            self._reasoning.set_conversation(self._conversation)
         if hasattr(self._reasoning, "set_context"):
             try:
                 memories = await self._memory_repo.get_all()

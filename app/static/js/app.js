@@ -44,387 +44,191 @@ const STATE_COLORS = {
 
 let currentState = { state: 'ARMED', muted: false, mode: 'demo' };
 
-// ---- Live Microphone Recording ----
+// Microphone samples are sent only to this application's local Whisper server.
+let capture = null;
+let captureGeneration = 0;
 let isRecording = false;
-let mediaRecorder = null;
-let audioChunks = [];
-let speechRecognition = null;
-let liveTranscript = '';
-
-// ---- Continuous Listening Mode ----
 let continuousMode = false;
-let continuousRecognition = null;
-let continuousSilenceTimer = null;
-let continuousTranscript = '';
+let voiceBusy = false;
+let voiceRequest = null;
+let ttsPlaying = false;
+const voiceQueue = [];
+const MAX_PENDING_UTTERANCES = 4;
+const SPEECH_THRESHOLD = 0.010;
+const END_PAUSE_SECONDS = 0.55;
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-function toggleRecording() {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
+function listeningStatus() {
+    if (ttsPlaying) return 'Speaking reply. Listening resumes when it finishes.';
+    if (voiceBusy) return `Listening locally. Processing previous command${voiceQueue.length ? `; ${voiceQueue.length} waiting` : ''}...`;
+    return 'Listening locally. Speak, then pause.';
 }
-
-async function startRecording() {
-    const btn = document.getElementById('record-btn');
-    const label = document.getElementById('record-label');
-    const status = document.getElementById('record-status');
-
-    // Disable continuous button while recording
-    document.getElementById('continuous-btn').disabled = true;
-
-    // Try browser speech recognition first (works in Chrome/Edge)
-    if (SpeechRecognition) {
-        try {
-            speechRecognition = new SpeechRecognition();
-            speechRecognition.continuous = true;
-            speechRecognition.interimResults = true;
-            speechRecognition.lang = 'en-US';
-            liveTranscript = '';
-
-            speechRecognition.onresult = (event) => {
-                let final = '';
-                let interim = '';
-                for (let i = 0; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        final += event.results[i][0].transcript;
-                    } else {
-                        interim += event.results[i][0].transcript;
-                    }
-                }
-                liveTranscript = final;
-                status.textContent = final + (interim ? '...' + interim : '');
-            };
-
-            speechRecognition.onerror = (event) => {
-                console.error('Speech recognition error:', event.error);
-                if (event.error === 'not-allowed') {
-                    status.textContent = 'Microphone permission denied.';
-                    stopRecording();
-                }
-            };
-
-            speechRecognition.onend = () => {
-                if (isRecording) {
-                    // Auto-restart if still recording (browser stops after silence)
-                    try { speechRecognition.start(); } catch (e) {}
-                }
-            };
-
-            speechRecognition.start();
-            isRecording = true;
-            btn.classList.add('recording');
-            label.textContent = 'Stop';
-            status.textContent = 'Listening...';
-            updateStateUI({ state: 'LISTENING' });
+function trimTrailingSilence(chunks, sampleRate, silence) {
+    let remove = Math.max(0, Math.floor((silence - 0.15) * sampleRate));
+    const result = chunks.slice();
+    while (result.length && remove > 0) {
+        const last = result[result.length - 1];
+        if (last.length <= remove) { remove -= last.length; result.pop(); }
+        else { result[result.length - 1] = last.subarray(0, last.length - remove); remove = 0; }
+    }
+    return result;
+}
+function submitUtterance(blob, generation) {
+    if (currentState.muted || generation !== captureGeneration) return;
+    if (voiceBusy) {
+        if (voiceQueue.length >= MAX_PENDING_UTTERANCES) {
+            voiceStatus('Speech queue is full. Wait for a reply, then repeat your last command.');
             return;
-        } catch (e) {
-            console.warn('Speech recognition failed, falling back to MediaRecorder:', e);
         }
+        voiceQueue.push({ blob, generation });
+        voiceStatus(listeningStatus());
+        return;
     }
-
-    // Fallback: record raw audio with MediaRecorder (needs whisper.cpp for transcription)
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        audioChunks = [];
-
-        mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) audioChunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = async () => {
-            stream.getTracks().forEach(t => t.stop());
-            const blob = new Blob(audioChunks, { type: 'audio/webm' });
-            await sendRecordedAudio(blob);
-        };
-
-        mediaRecorder.start();
-        isRecording = true;
-        btn.classList.add('recording');
-        label.textContent = 'Stop';
-        status.textContent = 'Recording audio... (needs whisper.cpp for transcription)';
-        updateStateUI({ state: 'LISTENING' });
-    } catch (e) {
-        status.textContent = 'Microphone access denied or unavailable.';
-        showResponse({ response: 'Could not access microphone: ' + e.message, processing_mode: 'LOCAL' });
-    }
+    sendRecordedAudio(blob, generation);
 }
 
+function voiceStatus(text) { document.getElementById('record-status').textContent = text; }
+function voiceControls() {
+    document.getElementById('record-label').textContent = isRecording ? 'Stop' : 'Record';
+    document.getElementById('record-btn').classList.toggle('recording', isRecording);
+    document.getElementById('record-btn').disabled = currentState.muted || continuousMode || voiceBusy;
+    document.getElementById('continuous-btn').disabled = currentState.muted || isRecording;
+    document.getElementById('continuous-btn').textContent = continuousMode ? 'Continuous: On' : 'Continuous: Off';
+    document.getElementById('continuous-btn').classList.toggle('active', continuousMode);
+}
+function encodeWav(chunks, sampleRate) {
+    const size = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const samples = new Float32Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { samples.set(chunk, offset); offset += chunk.length; }
+    const count = Math.floor(size * 16000 / sampleRate);
+    const buffer = new ArrayBuffer(44 + count * 2);
+    const view = new DataView(buffer);
+    const word = (at, text) => [...text].forEach((ch, i) => view.setUint8(at + i, ch.charCodeAt(0)));
+    word(0, 'RIFF'); view.setUint32(4, 36 + count * 2, true); word(8, 'WAVE');
+    word(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, 16000, true);
+    view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    word(36, 'data'); view.setUint32(40, count * 2, true);
+    for (let i = 0; i < count; i++) {
+        const position = i * sampleRate / 16000;
+        const left = Math.floor(position), fraction = position - left;
+        const value = Math.max(-1, Math.min(1, samples[left] * (1 - fraction) + (samples[left + 1] ?? samples[left]) * fraction));
+        view.setInt16(44 + i * 2, value < 0 ? value * 32768 : value * 32767, true);
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+}
+function releaseCapture(session) {
+    if (!session) return;
+    session.stream?.getTracks().forEach(track => track.stop());
+    if (session.node) { session.node.port.onmessage = null; session.node.disconnect(); }
+    session.source?.disconnect();
+    if (session.context && session.context.state !== 'closed') session.context.close().catch(() => {});
+}
+function stopAllVoice() {
+    captureGeneration++;
+    releaseCapture(capture); capture = null;
+    isRecording = false; continuousMode = false;
+    voiceRequest?.abort(); voiceRequest = null;
+    voiceBusy = false;
+    voiceQueue.length = 0;
+    cancelSpeech();
+    voiceControls();
+}
+async function beginCapture(continuous) {
+    if (currentState.muted || capture || voiceBusy) return;
+    const generation = ++captureGeneration;
+    const session = { chunks: [], duration: 0, voiced: 0, silence: 0, preRoll: [] };
+    capture = session;
+    isRecording = !continuous; continuousMode = continuous; voiceControls();
+    voiceStatus('Checking local speech service...');
+    try {
+        const services = await API.get('/api/voice');
+        if (generation !== captureGeneration || capture !== session) return;
+        if (!services.speech_to_text) throw new Error('Local speech service is unavailable. Start start-qwen.bat, then retry.');
+        session.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+        if (generation !== captureGeneration || capture !== session || currentState.muted) { releaseCapture(session); return; }
+        session.context = new (window.AudioContext || window.webkitAudioContext)();
+        await session.context.audioWorklet.addModule('/static/js/audio-capture-worklet.js');
+        if (generation !== captureGeneration || capture !== session) { releaseCapture(session); return; }
+        session.source = session.context.createMediaStreamSource(session.stream);
+        session.node = new AudioWorkletNode(session.context, 'companion-capture');
+        session.node.port.onmessage = event => {
+            if (capture !== session || currentState.muted || ttsPlaying) return;
+            const samples = event.data;
+            const seconds = samples.length / session.context.sampleRate;
+            if (!continuous) {
+                session.chunks.push(samples); session.duration += seconds;
+                if (session.duration >= 30) stopRecording();
+                return;
+            }
+            const rms = Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length);
+            if (!session.chunks.length && rms < SPEECH_THRESHOLD) {
+                session.preRoll.push(samples);
+                if (session.preRoll.length > Math.ceil(session.context.sampleRate * 0.2 / samples.length)) session.preRoll.shift();
+                return;
+            }
+            if (!session.chunks.length) { session.chunks.push(...session.preRoll); session.preRoll = []; }
+            session.chunks.push(samples); session.duration += seconds;
+            if (rms >= SPEECH_THRESHOLD) { session.voiced += seconds; session.silence = 0; }
+            else session.silence += seconds;
+            if (session.silence >= END_PAUSE_SECONDS || session.duration >= 15) {
+                const chunks = trimTrailingSilence(session.chunks, session.context.sampleRate, session.silence);
+                const voiced = session.voiced;
+                session.chunks = []; session.duration = 0; session.voiced = 0; session.silence = 0;
+                if (voiced >= 0.18) submitUtterance(encodeWav(chunks, session.context.sampleRate), generation);
+            }
+        };
+        session.source.connect(session.node); session.node.connect(session.context.destination);
+        await session.context.resume();
+        if (generation !== captureGeneration || capture !== session) { releaseCapture(session); return; }
+        voiceStatus(continuous ? 'Listening locally. Speak, then pause.' : 'Recording locally. Speak, then click Stop.');
+    } catch (error) {
+        if (generation !== captureGeneration) { releaseCapture(session); return; }
+        stopAllVoice();
+        voiceStatus(error.name === 'NotAllowedError' ? 'Allow microphone access for localhost in your browser and Windows settings.' : error.message);
+    }
+}
+function toggleRecording() { if (isRecording) stopRecording(); else beginCapture(false); }
 function stopRecording() {
-    const btn = document.getElementById('record-btn');
-    const label = document.getElementById('record-label');
-    const status = document.getElementById('record-status');
-
-    isRecording = false;
-    btn.classList.remove('recording');
-    label.textContent = 'Record';
-
-    // Re-enable continuous button
-    document.getElementById('continuous-btn').disabled = false;
-
-    if (speechRecognition) {
-        speechRecognition.stop();
-        speechRecognition = null;
-
-        if (liveTranscript.trim()) {
-            status.textContent = 'Sending: "' + liveTranscript.trim() + '"';
-            sendTranscribedText(liveTranscript.trim());
-        } else {
-            status.textContent = 'No speech detected.';
-            updateStateUI({ state: 'ARMED' });
-        }
-        return;
-    }
-
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        status.textContent = 'Processing...';
-        mediaRecorder.stop();
-    } else {
-        updateStateUI({ state: 'ARMED' });
-    }
+    const session = capture;
+    if (!session || !isRecording) return;
+    const generation = captureGeneration;
+    capture = null; isRecording = false; releaseCapture(session); voiceControls();
+    if (session.chunks.length) sendRecordedAudio(encodeWav(session.chunks, session.context.sampleRate), generation);
+    else voiceStatus('No audio captured. Click Record and speak before clicking Stop.');
 }
-
-async function sendTranscribedText(text) {
-    const status = document.getElementById('record-status');
+function toggleContinuous() { if (continuousMode) stopContinuousListening(); else beginCapture(true); }
+function stopContinuousListening() { stopAllVoice(); voiceStatus('Continuous listening stopped.'); }
+async function sendRecordedAudio(blob, generation = captureGeneration) {
+    if (currentState.muted || voiceBusy || generation !== captureGeneration) return;
+    const controller = new AbortController(); voiceRequest = controller; voiceBusy = true; voiceControls();
+    voiceStatus(continuousMode ? listeningStatus() : 'Transcribing locally...');
+    const timeout = setTimeout(() => controller.abort(), 240000);
+    let failed = false;
     try {
-        updateStateUI({ state: 'REASONING_LOCAL' });
-        status.textContent = 'Processing: "' + text + '"...';
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
-
-        const res = await fetch('/api/command', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-            signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        const data = await res.json();
-        addToHistory(text, data);
-        if (!continuousMode) {
-            status.textContent = '';
-        }
-        await refreshData();
-        return data;
-    } catch (e) {
-        if (e.name === 'AbortError') {
-            addToHistory(text, { response: 'Request timed out. The AI model may be slow — try a shorter command.', processing_mode: 'LOCAL' });
-        } else {
-            addToHistory(text, { response: 'Error: ' + e.message, processing_mode: 'LOCAL' });
-        }
-        if (!continuousMode) {
-            status.textContent = '';
-        }
-        updateStateUI({ state: 'ARMED' });
-        return null;
-    }
-}
-
-async function sendRecordedAudio(blob) {
-    const status = document.getElementById('record-status');
-    const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
-
-    try {
-        updateStateUI({ state: 'TRANSCRIBING' });
-        const data = await API.postFile('/api/audio', file);
-        if (data.transcription) {
-            addToHistory(data.transcription, {
-                response: data.response || data.error || '',
-                processing_mode: data.processing_mode || 'LOCAL',
-                state: data.state,
-            });
-        } else if (data.detail) {
-            addToHistory(null, { response: data.detail, processing_mode: 'LOCAL' });
-        } else {
-            addToHistory(null, data);
-        }
-        status.textContent = '';
-        await refreshData();
-    } catch (e) {
-        addToHistory(null, { response: 'Audio error: ' + e.message, processing_mode: 'LOCAL' });
-        status.textContent = '';
-    }
-}
-
-// ---- Continuous Listening Mode ----
-function toggleContinuous() {
-    if (continuousMode) {
-        stopContinuousListening();
-    } else {
-        startContinuousListening();
-    }
-}
-
-function startContinuousListening() {
-    if (!SpeechRecognition) {
-        const status = document.getElementById('record-status');
-        status.textContent = 'Continuous mode requires Chrome or Edge (SpeechRecognition API).';
-        return;
-    }
-
-    // Disable the manual record button
-    const recordBtn = document.getElementById('record-btn');
-    const contBtn = document.getElementById('continuous-btn');
-    const status = document.getElementById('record-status');
-
-    continuousMode = true;
-    recordBtn.disabled = true;
-    contBtn.textContent = 'Continuous: On';
-    contBtn.classList.add('active');
-    status.textContent = 'Listening...';
-    updateStateUI({ state: 'LISTENING' });
-
-    continuousTranscript = '';
-    initContinuousRecognition();
-}
-
-function initContinuousRecognition() {
-    if (!continuousMode) return;
-
-    continuousRecognition = new SpeechRecognition();
-    continuousRecognition.continuous = true;
-    continuousRecognition.interimResults = true;
-    continuousRecognition.lang = 'en-US';
-
-    let finalTranscript = '';
-
-    continuousRecognition.onresult = (event) => {
-        let interim = '';
-        finalTranscript = '';
-        for (let i = 0; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-                finalTranscript += event.results[i][0].transcript;
-            } else {
-                interim += event.results[i][0].transcript;
+        const form = new FormData(); form.append('file', new File([blob], 'recording.wav', { type: 'audio/wav' }));
+        const response = await fetch('/api/audio', { method: 'POST', body: form, signal: controller.signal });
+        const data = await response.json();
+        if (generation !== captureGeneration || currentState.muted) return;
+        if (!response.ok) throw new Error(data.detail || data.error || 'Local transcription failed.');
+        addToHistory(data.transcription || null, { ...data, response: data.response || data.error });
+        // Updating the dashboard must not prevent the next utterance from processing.
+        refreshData().catch(console.error);
+    } catch (error) {
+        failed = true;
+        if (generation === captureGeneration && !currentState.muted) voiceStatus(error.name === 'AbortError' ? 'Local speech request timed out. Try a shorter recording.' : error.message);
+    } finally {
+        clearTimeout(timeout);
+        if (voiceRequest === controller) {
+            voiceRequest = null; voiceBusy = false; voiceControls();
+            const next = voiceQueue.shift();
+            if (next && next.generation === captureGeneration && !currentState.muted) sendRecordedAudio(next.blob, next.generation);
+            else {
+                if (continuousMode && !failed && !controller.signal.aborted) voiceStatus(listeningStatus());
+                drainSpeech();
             }
         }
-
-        const status = document.getElementById('record-status');
-        status.textContent = (finalTranscript + (interim ? ' ...' + interim : '')) || 'Listening...';
-
-        // Reset silence timer whenever we get new results
-        if (continuousSilenceTimer) {
-            clearTimeout(continuousSilenceTimer);
-            continuousSilenceTimer = null;
-        }
-
-        // If we have a final transcript, start a silence timer
-        if (finalTranscript.trim()) {
-            continuousSilenceTimer = setTimeout(() => {
-                // Silence detected after final results - send the text
-                const textToSend = finalTranscript.trim();
-                finalTranscript = '';
-                continuousTranscript = '';
-
-                if (textToSend && continuousMode) {
-                    // Stop current recognition before sending
-                    try { continuousRecognition.stop(); } catch (e) {}
-
-                    const status = document.getElementById('record-status');
-                    status.textContent = 'Processing...';
-                    updateStateUI({ state: 'REASONING_LOCAL' });
-
-                    sendTranscribedText(textToSend).then(() => {
-                        if (continuousMode) {
-                            restartContinuousListening();
-                        }
-                    });
-                }
-            }, 2000);
-        }
-    };
-
-    continuousRecognition.onend = () => {
-        // Browser sometimes stops recognition on its own
-        if (continuousMode) {
-            // If we have pending final text and a silence timer, let it fire
-            if (!continuousSilenceTimer) {
-                // No pending text, just restart
-                setTimeout(() => {
-                    if (continuousMode) {
-                        try {
-                            initContinuousRecognition();
-                        } catch (e) {
-                            console.error('Failed to restart continuous recognition:', e);
-                        }
-                    }
-                }, 300);
-            }
-        }
-    };
-
-    continuousRecognition.onerror = (event) => {
-        console.error('Continuous recognition error:', event.error);
-        if (event.error === 'not-allowed') {
-            const status = document.getElementById('record-status');
-            status.textContent = 'Microphone permission denied.';
-            stopContinuousListening();
-            return;
-        }
-        // For other errors, restart if still in continuous mode
-        if (continuousMode) {
-            setTimeout(() => {
-                if (continuousMode) {
-                    initContinuousRecognition();
-                }
-            }, 500);
-        }
-    };
-
-    try {
-        continuousRecognition.start();
-    } catch (e) {
-        console.error('Failed to start continuous recognition:', e);
-        setTimeout(() => {
-            if (continuousMode) {
-                initContinuousRecognition();
-            }
-        }, 500);
     }
-}
-
-function restartContinuousListening() {
-    if (!continuousMode) return;
-    const status = document.getElementById('record-status');
-    status.textContent = 'Listening...';
-    updateStateUI({ state: 'LISTENING' });
-    continuousTranscript = '';
-    // Small delay before restarting to avoid rapid start/stop
-    setTimeout(() => {
-        if (continuousMode) {
-            initContinuousRecognition();
-        }
-    }, 500);
-}
-
-function stopContinuousListening() {
-    continuousMode = false;
-
-    if (continuousSilenceTimer) {
-        clearTimeout(continuousSilenceTimer);
-        continuousSilenceTimer = null;
-    }
-
-    if (continuousRecognition) {
-        try { continuousRecognition.stop(); } catch (e) {}
-        continuousRecognition = null;
-    }
-
-    continuousTranscript = '';
-
-    const recordBtn = document.getElementById('record-btn');
-    const contBtn = document.getElementById('continuous-btn');
-    const status = document.getElementById('record-status');
-
-    recordBtn.disabled = false;
-    contBtn.textContent = 'Continuous: Off';
-    contBtn.classList.remove('active');
-    status.textContent = '';
-    updateStateUI({ state: 'ARMED' });
 }
 
 // ---- Audio File Upload ----
@@ -478,14 +282,16 @@ function updateStateUI(data) {
     const dot = document.getElementById('state-dot');
     const badge = document.getElementById('state-badge');
     const stateText = document.getElementById('state-text');
-    const color = STATE_COLORS[currentState.state] || STATE_COLORS.ARMED;
+    const displayState = currentState.muted ? 'MUTED' : ttsPlaying ? 'SPEAKING' : capture && currentState.state === 'ARMED' ? 'LISTENING' : currentState.state;
+    const color = STATE_COLORS[displayState] || STATE_COLORS.ARMED;
 
     dot.style.background = color;
     badge.style.borderColor = color;
-    stateText.textContent = currentState.state;
+    stateText.textContent = displayState;
 
     const muteBtn = document.getElementById('mute-btn');
     if (currentState.muted) {
+        if (capture || voiceRequest || speechRequest) stopAllVoice();
         muteBtn.textContent = 'Unmute';
         muteBtn.classList.add('muted');
     } else {
@@ -510,6 +316,7 @@ async function pollState() {
 
 async function toggleMute() {
     const url = currentState.muted ? '/api/unmute' : '/api/mute';
+    if (!currentState.muted) { stopAllVoice(); voiceStatus('Microphone stopped.'); }
     const data = await API.post(url);
     updateStateUI(data);
     await pollState();
@@ -529,16 +336,62 @@ let ttsEnabled = false;
 
 function toggleTTS() {
     ttsEnabled = !ttsEnabled;
+    if (!ttsEnabled) cancelSpeech();
     document.getElementById('tts-btn').textContent = ttsEnabled ? 'TTS: On' : 'TTS: Off';
 }
 
+let speechAudio = null;
+let speechRequest = null;
+let speechUrl = null;
+const speechQueue = [];
+function cancelSpeech(clearQueue = true) {
+    if (clearQueue) speechQueue.length = 0;
+    speechRequest?.abort(); speechRequest = null;
+    if (speechAudio) { speechAudio.pause(); speechAudio.src = ''; speechAudio = null; }
+    if (speechUrl) { URL.revokeObjectURL(speechUrl); speechUrl = null; }
+    ttsPlaying = false;
+    if (continuousMode && !currentState.muted) voiceStatus(listeningStatus());
+}
 function speakResponse(text) {
-    if (!ttsEnabled || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    window.speechSynthesis.speak(utterance);
+    if (!ttsEnabled || currentState.muted || !text) return;
+    speechQueue.push(text.slice(0, 4000));
+    drainSpeech();
+}
+async function drainSpeech() {
+    if (!ttsEnabled || currentState.muted || speechRequest || !speechQueue.length) return;
+    // Defer replies while commands are processing instead of silently discarding them.
+    if (continuousMode && (voiceBusy || voiceQueue.length)) return;
+    const text = speechQueue.shift();
+    const controller = new AbortController(); speechRequest = controller;
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    try {
+        const response = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }), signal: controller.signal });
+        if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Local voice output failed.'); }
+        const blob = await response.blob();
+        if (speechRequest !== controller || currentState.muted) return;
+        if (continuousMode && (voiceQueue.length || voiceBusy)) {
+            speechQueue.unshift(text);
+            cancelSpeech(false);
+            return;
+        }
+        ttsPlaying = true;
+        if (continuousMode) voiceStatus(listeningStatus());
+        if (capture) { capture.chunks = []; capture.preRoll = []; capture.duration = 0; capture.voiced = 0; capture.silence = 0; }
+        speechUrl = URL.createObjectURL(blob); speechAudio = new Audio(speechUrl);
+        speechAudio.onended = () => {
+            if (speechRequest === controller) { cancelSpeech(false); drainSpeech(); }
+        };
+        speechAudio.onerror = () => {
+            if (speechRequest === controller) { cancelSpeech(false); voiceStatus('Could not play the local voice response.'); drainSpeech(); }
+        };
+        await speechAudio.play();
+    } catch (error) {
+        if (speechRequest === controller) {
+            cancelSpeech(false);
+            if (error.name !== 'AbortError') voiceStatus(error.name === 'NotAllowedError' ? 'Browser blocked audio playback. Turn TTS off and on, then try again.' : error.message);
+            drainSpeech();
+        }
+    } finally { clearTimeout(timeout); }
 }
 
 function addToHistory(userText, data) {
@@ -594,7 +447,14 @@ function showResponse(data) {
     addToHistory(null, data);
 }
 
-function clearHistory() {
+async function clearHistory() {
+    try {
+        const result = await API.post('/api/conversation/clear');
+        if (!result.success) throw new Error(result.detail || 'Could not clear conversation');
+    } catch (e) {
+        alert(e.message);
+        return;
+    }
     const history = document.getElementById('conversation-history');
     history.innerHTML = '<div class="empty-state" id="conversation-empty">Start a conversation with your companion.</div>';
 }
@@ -733,15 +593,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Check if speech recognition is available
-    const status = document.getElementById('record-status');
-    if (!SpeechRecognition && !navigator.mediaDevices) {
-        status.textContent = 'Audio not supported in this browser.';
+    if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
+        voiceStatus('Microphone requires a browser with audio support. Open http://localhost:8000.');
         document.getElementById('record-btn').disabled = true;
         document.getElementById('continuous-btn').disabled = true;
-    } else if (!SpeechRecognition) {
-        // Continuous mode requires SpeechRecognition API
-        document.getElementById('continuous-btn').disabled = true;
-        document.getElementById('continuous-btn').title = 'Requires Chrome or Edge';
     }
 });
+window.addEventListener('pagehide', stopAllVoice);

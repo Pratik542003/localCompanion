@@ -36,6 +36,7 @@ class ProcessingMode(str, enum.Enum):
 
 
 class ActionType(str, enum.Enum):
+    ANSWER = "answer"
     SAVE_MEMORY = "save_memory"
     SEARCH_MEMORY = "search_memory"
     ADD_TASK = "add_task"

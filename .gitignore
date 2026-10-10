@@ -31,3 +31,6 @@ uploads/
 *.swo
 
 *.log
+data/models/
+data/runtime/
+data/tools/

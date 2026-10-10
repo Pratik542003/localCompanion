@@ -92,6 +92,18 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.include_router(router)
 
 
+@app.middleware("http")
+async def privacy_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; worker-src 'self' blob:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    )
+    response.headers["Permissions-Policy"] = "microphone=(self), camera=()"
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request, "dashboard.html")

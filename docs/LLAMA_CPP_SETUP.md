@@ -2,6 +2,31 @@
 
 Local AI reasoning engine for the Local Companion. Runs the LLM entirely on your device — no cloud, no API keys.
 
+## Qwen3 setup for this Windows ARM computer
+
+The installed model is [Qwen3-4B Q4_K_M](https://huggingface.co/Qwen/Qwen3-4B-GGUF),
+stored at `data/models/Qwen3-4B-Q4_K_M.gguf`. The existing ARM64 llama.cpp runtime
+is at `C:\llama-cpp\models\llama-server.exe`.
+
+Double-click `scripts/start-qwen.bat` to start Qwen, Whisper, and the companion together. Piper provides local spoken responses when TTS is enabled.
+The launcher reuses an already running Qwen server. It binds to `127.0.0.1:8082`,
+uses eight CPU threads and an 8192-token context, and disables thinking mode for
+ordinary conversation. It does not replace a different service on that port.
+
+The companion opens at **http://localhost:8000**. Its `/health` endpoint should
+report `"model": "qwen3-4b"`. No wake phrase is required. Qwen server logs and its
+process ID are under `data/runtime/`. Saved memories stay in the existing database.
+
+For a model-only start:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-qwen.ps1
+```
+
+The downloaded file's SHA256 is
+`7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5`,
+as published on the [official file page](https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/Qwen3-4B-Q4_K_M.gguf).
+
 ---
 
 ## Hardware Requirements

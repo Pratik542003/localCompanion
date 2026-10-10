@@ -17,7 +17,7 @@ _STOP_WORDS = frozenset(
     "of in on at to for with by from about into through during before after "
     "and or but not no nor so yet if then else "
     "is there here all any each every both few many much some such "
-    "get got tell told know knew find".split()
+    "get got tell told know knew find time date please".split()
 )
 
 
@@ -26,7 +26,7 @@ def _sanitize_fts_query(query: str) -> str:
     tokens = [t for t in sanitized.split() if t.lower() not in _STOP_WORDS]
     if not tokens:
         return ""
-    return " AND ".join(tokens)
+    return " AND ".join('"' + t + '"' for t in tokens)
 
 
 class SQLiteMemoryRepository(MemoryRepository):
@@ -57,7 +57,7 @@ class SQLiteMemoryRepository(MemoryRepository):
     async def search(self, query: str) -> list[Memory]:
         fts_query = _sanitize_fts_query(query)
         if not fts_query:
-            return await self.get_all()
+            return []
 
         async with get_db() as db:
             try:

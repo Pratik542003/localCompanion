@@ -242,7 +242,7 @@ local-companion/
 | Port 8000 in use | `netstat -ano \| findstr :8000` then `taskkill /PID <pid> /F` |
 | "No module named 'app'" | Make sure you ran `pip install -e .` and activated the venv |
 | Slow AI responses | Use the smaller 1B model, reduce context to `-c 1024` |
-| Voice recording not working | Use Chrome or Edge — Firefox doesn't support SpeechRecognition API |
+| Voice recording not working | Open localhost, allow microphone access, and start local Whisper with start-qwen.bat |
 | Weather not working | Check your internet connection |
 | Memories not found | Try more specific search terms (stop words are filtered) |
 | Browser says "Audio not supported" | Use Chrome or Edge, ensure HTTPS or localhost |

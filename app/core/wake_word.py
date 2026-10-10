@@ -15,15 +15,15 @@ class WakeWordProcessor:
 
         If wake word detection is disabled, all text passes through.
         """
-        if not self._enabled:
-            return True, text
-
         stripped = text.lstrip()
-        if stripped.lower().startswith(self._wake_phrase.lower()):
+        if re.match(rf"{re.escape(self._wake_phrase)}(?:\b|$)", stripped, flags=re.I):
             remaining = stripped[len(self._wake_phrase) :]
             # Strip common punctuation that may follow the wake phrase
             remaining = re.sub(r"^[,;:!?\-\s]+", "", remaining)
             return True, remaining.strip()
+
+        if not self._enabled:
+            return True, text
 
         return False, ""
 

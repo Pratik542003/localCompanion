@@ -18,8 +18,8 @@
             </div>
             <div class="header-controls">
                 <select class="mode-select" id="mode-select" onchange="changeMode()">
-                    <option value="demo">Demo Mode</option>
-                    <option value="local_ai">Local AI Mode</option>
+                    <option value="demo">Demo Mode (basic commands)</option>
+                    <option value="local_ai">Local AI Mode (conversation)</option>
                 </select>
                 <button class="btn btn-secondary" id="tts-btn" onclick="toggleTTS()">TTS: Off</button>
                 <button class="btn btn-mute" id="mute-btn" onclick="toggleMute()">Mute</button>
@@ -32,7 +32,7 @@
                 <div class="card-title">Command <button class="btn-clear" onclick="clearHistory()">Clear History</button></div>
                 <div class="input-group">
                     <input type="text" id="command-input"
-                           placeholder='Type a command (e.g., "Hey Companion, remember that the meeting is Friday at 3 PM")'
+                           placeholder='Ask a question or say "remember my meeting is Monday at 3 PM"'
                            autocomplete="off">
                     <button class="btn btn-primary" id="send-btn" onclick="sendCommand()">
                         Send
@@ -54,7 +54,7 @@
                         <label for="audio-file" class="btn btn-secondary audio-label">
                             <span id="audio-filename">Choose audio file...</span>
                         </label>
-                        <input type="file" id="audio-file" accept=".wav,.mp3,.ogg,.flac,.webm" onchange="handleAudioSelect()">
+                        <input type="file" id="audio-file" accept=".wav" onchange="handleAudioSelect()">
                         <button class="btn btn-secondary" onclick="uploadAudio()">
                             Upload
                             <span class="spinner" id="audio-spinner"></span>
@@ -92,6 +92,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=continuous-voice-tts-4"></script>
 </body>
 </html>

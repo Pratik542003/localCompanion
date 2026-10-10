@@ -4,6 +4,7 @@ import re
 
 from app.domain.interfaces import ReasoningProvider
 from app.domain.models import ActionType, ReasoningResult
+from app.providers.reasoning.local_answers import local_answer
 
 
 class DemoReasoningProvider(ReasoningProvider):
@@ -13,13 +14,13 @@ class DemoReasoningProvider(ReasoningProvider):
     # Order matters: more specific patterns are checked first.
     _RULES: list[tuple[ActionType, list[str]]] = [
         (ActionType.LIST_TASKS, [
-            "show tasks", "list tasks", "pending tasks", "my tasks", "show my",
+            "show tasks", "list tasks", "pending tasks", "my tasks",
         ]),
         (ActionType.COMPLETE_TASK, [
             "mark", "complete", "finish", "done with",
         ]),
         (ActionType.ADD_TASK, [
-            "add to my task list", "add to task", "create task", "new task", "add task", "add",
+            "add to my task list", "add to task", "create task", "new task", "add task",
         ]),
         (ActionType.SAVE_MEMORY, [
             "keep in mind", "note that", "remember", "save", "store",
@@ -34,7 +35,7 @@ class DemoReasoningProvider(ReasoningProvider):
         ]),
         (ActionType.SEARCH_MEMORY, [
             "do you remember", "what do you know about",
-            "when is", "what is", "recall", "find", "search",
+            "recall", "find", "search",
         ]),
     ]
 
@@ -70,12 +71,27 @@ class DemoReasoningProvider(ReasoningProvider):
     # ------------------------------------------------------------------ #
 
     async def reason(self, text: str) -> ReasoningResult:
+        direct = local_answer(text)
+        if direct is not None:
+            return direct
         lower = text.lower().strip()
+
+        for keyword in ("do you remember", "what do you know about"):
+            if lower.startswith(keyword):
+                return self._build_result(ActionType.SEARCH_MEMORY, text, lower, keyword)
+
+        for keyword in ("keep in mind", "note that", "remember", "save", "store"):
+            if re.match(rf"^{re.escape(keyword)}\b", lower):
+                return self._build_result(ActionType.SAVE_MEMORY, text, lower, keyword)
 
         for action, keywords in self._RULES:
             # Sort keywords longest-first so the most specific phrase wins.
             for kw in sorted(keywords, key=len, reverse=True):
-                if kw in lower:
+                if re.search(rf"\b{re.escape(kw)}\b", lower):
+                    if action in (ActionType.ADD_TASK, ActionType.COMPLETE_TASK) and not lower.startswith(kw):
+                        continue
+                    if action == ActionType.SAVE_MEMORY and not re.match(r"^(?:my\s+)?(?:meeting|birthday|deadline|password|email|phone number|address|anniversary)\s+is\b", lower):
+                        continue
                     return self._build_result(action, text, lower, kw)
 
         # Nothing matched -> unsupported
@@ -83,7 +99,7 @@ class DemoReasoningProvider(ReasoningProvider):
             action=ActionType.UNSUPPORTED,
             parameters={},
             confidence=1.0,
-            response="I cannot answer this reliably using my current local capabilities.",
+            response="Demo mode handles memories, tasks, and simple arithmetic. For general conversation, switch to Local AI mode with a running local model.",
         )
 
     def is_available(self) -> bool:
@@ -104,7 +120,11 @@ class DemoReasoningProvider(ReasoningProvider):
         matched_keyword: str,
     ) -> ReasoningResult:
         if action == ActionType.SAVE_MEMORY:
-            content = self._extract_after_keyword(lower, matched_keyword)
+            # Strip an explicit instruction, but keep the subject of stated facts.
+            content = original.strip()
+            if matched_keyword in {"keep in mind", "note that", "remember", "save", "store"}:
+                idx = lower.find(matched_keyword) + len(matched_keyword)
+                content = re.sub(r"^that\s+", "", original[idx:].strip(), flags=re.I)
             return ReasoningResult(
                 action=ActionType.SAVE_MEMORY,
                 parameters={"content": content or original.strip()},

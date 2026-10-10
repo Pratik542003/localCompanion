@@ -2,7 +2,7 @@
 
 Local speech-to-text engine for the Local Companion. Converts audio files to text entirely on your device — no cloud, no API keys.
 
-> **Note:** whisper.cpp is optional. The dashboard also supports live microphone input via the browser's built-in SpeechRecognition API (works in Chrome/Edge without whisper.cpp). You only need whisper.cpp for audio file uploads or if browser speech recognition isn't available.
+> **Note:** all microphone and continuous-listening audio is transcribed by local whisper.cpp. Browser cloud speech recognition is not used. On this computer, `scripts/start-qwen.bat` starts Whisper automatically.
 
 ---
 
@@ -145,25 +145,20 @@ Then restart the Local Companion app. The "Upload Audio" button on the dashboard
 
 ## How Audio Input Works in Local Companion
 
-The dashboard supports **three** ways to input audio:
+| Method | Requires Whisper? | How it works |
+|--------|-------------------|--------------|
+| Text input | No | Local command routing and Qwen |
+| Record | Yes | Browser captures PCM WAV; local Whisper transcribes it |
+| Continuous | Yes | Local speech/pause detection submits each utterance |
+| Upload WAV | Yes | Local Whisper transcribes the selected WAV |
 
-| Method | Requires whisper.cpp? | How It Works |
-|--------|----------------------|-------------|
-| **Text input** | No | Type commands directly |
-| **Record button** (browser speech) | No | Uses Chrome/Edge SpeechRecognition API — transcription happens in the browser |
-| **Continuous listening** | No | Same as above but always-on |
-| **Upload audio file** | Yes | Sends audio file to whisper.cpp for transcription |
+Mute stops microphone capture and blocks further processing. Raw recordings are deleted after processing, including failures.
 
 ---
 
 ## Supported Audio Formats
 
-The Local Companion accepts these audio file formats for upload:
-- `.wav` (recommended)
-- `.mp3`
-- `.ogg`
-- `.flac`
-- `.webm`
+Use PCM `.wav` files. The microphone buttons generate 16 kHz mono 16-bit WAV automatically. Convert other formats to WAV before uploading.
 
 Maximum file size: 25 MB
 

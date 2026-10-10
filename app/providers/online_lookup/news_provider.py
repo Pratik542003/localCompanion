@@ -5,13 +5,14 @@ from typing import Any
 import httpx
 
 from app.domain.interfaces import OnlineLookupProvider
+from app.core.privacy import require_lookup_url
 
 
 class NewsLookupProvider(OnlineLookupProvider):
     """News lookup via Wikinews API — privacy-friendly, no API key needed."""
 
     def __init__(self, base_url: str = "https://en.wikinews.org", timeout: int = 10) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = require_lookup_url(base_url, "en.wikinews.org")
         self._timeout = timeout
 
     async def lookup(self, params: dict[str, Any]) -> dict[str, Any]:
